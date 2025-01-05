@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "cal-sync",
+]
+default-members = ["cal-sync"]
+
+[workspace.package]
+authors = ["David Minh-Duy Cao <david@cao.sh>"]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
