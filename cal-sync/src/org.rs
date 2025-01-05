@@ -113,15 +113,15 @@ impl Traverser for Traversal {
                 }
 
                 // Remove all invalid timestamps
-                l.timestamps.retain(|ts| match &ts.start {
+                l.timestamps.retain_mut(|ts| match &ts.start {
                     Dateish::AllDay(_) => false,
                     Dateish::Precise(zoned) => {
                         if let Some(Dateish::Precise(zoned_end)) = &ts.end {
                             zoned_end > self.now
                         } else {
-                            // ts.end = Some(Dateish::Precise(
-                            //     zoned.checked_add(1.hour()).expect("Overflow duration"),
-                            // ));
+                            ts.end = Some(Dateish::Precise(
+                                zoned.checked_add(1.hour()).expect("Overflow duration"),
+                            ));
 
                             zoned > self.now
                         }

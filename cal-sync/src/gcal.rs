@@ -21,7 +21,7 @@ use tokio::{
     },
     task::JoinSet,
 };
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::org::AgendaItem;
 
@@ -86,6 +86,8 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
         set.spawn(async move {
             let ev_id = ev.id;
 
+            debug!("del {}", ev.summary);
+
             client
                 .events()
                 .delete(&cal_id, &ev_id, false, SendUpdates::Noop)
@@ -96,7 +98,7 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
     // Await all delete tasks
     let mut deleted_evs = 0;
     while let Some(res) = set.join_next().await {
-        let _ = res?;
+        let _ = res??;
         deleted_evs += 1;
     }
     info!("Deleted: {deleted_evs}");
@@ -134,7 +136,8 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
     // Await all insert tasks
     let mut inserted_evs = 0;
     while let Some(res) = set.join_next().await {
-        let _ = res?;
+        let r = res??;
+        debug!("ins {}", r.body.summary);
         inserted_evs += 1;
     }
     info!("Inserted: {inserted_evs}");
