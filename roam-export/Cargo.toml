@@ -1,0 +1,31 @@
+[package]
+name = "roam-export"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+argh = "0.1"
+walkdir = "2"
+rayon = "1"
+color-eyre = "0.6"
+
+jiff = "0.1"
+
+orgize = "0.10.0-alpha.10"
+slug = "0.1"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dependencies.uuid]
+version = "1.11.1"
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]
+
+# serde = "1"
+# serde_json = "1"

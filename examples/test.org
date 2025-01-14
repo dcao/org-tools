@@ -1,0 +1,7 @@
+#+filetags: :export:
+
+* Test :export:
+** Test 2
+
+* Test 3
+Whatever

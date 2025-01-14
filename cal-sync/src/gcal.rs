@@ -6,26 +6,25 @@ use axum::{
     Router,
 };
 use color_eyre::{
-    eyre::{eyre, ContextCompat},
+    eyre::{eyre, ContextCompat, OptionExt},
     Result,
 };
+use futures::future::join_all;
 use google_calendar::{
     types::{Event, MinAccessRole, OrderBy, SendUpdates},
     AccessToken, Client,
 };
 use serde::Deserialize;
-use tokio::{
-    sync::{
-        mpsc,
-        oneshot::{self},
-    },
-    task::JoinSet,
+use tokio::sync::{
+    mpsc,
+    oneshot::{self},
 };
 use tracing::{debug, info};
 
 use crate::org::AgendaItem;
 
 const PORT: u16 = 8081;
+const TIMEOUT: u64 = 90;
 
 #[derive(Debug, Deserialize)]
 struct Credentials {
@@ -53,90 +52,95 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
         .wrap_err(format!("Couldn't find calendar {}", calendar_summary))?;
 
     // Next, find all events in this calendar with the matching description.
-    let mut set = JoinSet::new();
+    let dels = join_all(
+        client
+            .events()
+            .list_all(
+                &cal.id,
+                "",
+                0,
+                OrderBy::Noop,
+                &[],
+                "",
+                &[],
+                false,
+                false,
+                false,
+                "",
+                "",
+                "",
+                "",
+            )
+            .await?
+            .body
+            .into_iter()
+            .filter(|ev| ev.description == GENERATED_DESC)
+            .map(|ev| {
+                let cal_id = cal.id.clone();
+                let client = client.clone();
 
-    for ev in client
-        .events()
-        .list_all(
-            &cal.id,
-            "",
-            0,
-            OrderBy::Noop,
-            &[],
-            "",
-            &[],
-            false,
-            false,
-            false,
-            "",
-            "",
-            "",
-            "",
-        )
-        .await?
-        .body
-    {
-        if ev.description != GENERATED_DESC {
-            continue;
-        }
+                async move {
+                    let ev_id = ev.id;
 
-        let cal_id = cal.id.clone();
-        let client = client.clone();
+                    debug!("del {}", ev.summary);
 
-        set.spawn(async move {
-            let ev_id = ev.id;
-
-            debug!("del {}", ev.summary);
-
-            client
-                .events()
-                .delete(&cal_id, &ev_id, false, SendUpdates::Noop)
-                .await
-        });
-    }
+                    client
+                        .events()
+                        .delete(&cal_id, &ev_id, false, SendUpdates::Noop)
+                        .await
+                }
+            }),
+    )
+    .await;
 
     // Await all delete tasks
     let mut deleted_evs = 0;
-    while let Some(res) = set.join_next().await {
-        let _ = res??;
+    for res in dels {
+        let _ = res?;
         deleted_evs += 1;
     }
     info!("Deleted: {deleted_evs}");
 
     // Now, let's add all of our org tasks
-    let mut set = JoinSet::new();
+    let adds = join_all(
+        events
+            .into_iter()
+            .flat_map(|new_ev| {
+                new_ev
+                    .timestamps
+                    .into_iter()
+                    .map(move |x| (x, new_ev.name.clone()))
+            })
+            .map(|(s, name)| {
+                let client = client.clone();
+                let cal_id = cal.id.clone();
 
-    for new_ev in events {
-        for s in new_ev.timestamps {
-            let client = client.clone();
-            let cal_id = cal.id.clone();
-            let name = new_ev.name.clone();
+                let (start, end, rep) = s.into_gcal();
 
-            let (start, end, rep) = s.into_gcal();
+                async move {
+                    let e = Event {
+                        summary: format!("TS: {name}"),
+                        description: GENERATED_DESC.to_string(),
+                        start: Some(start),
+                        end,
+                        recurrence: rep.map(|r| vec![r]).unwrap_or_else(Vec::new),
+                        color_id: "8".to_string(),
+                        ..Default::default()
+                    };
 
-            set.spawn(async move {
-                let e = Event {
-                    summary: format!("TS: {name}"),
-                    description: GENERATED_DESC.to_string(),
-                    start: Some(start),
-                    end,
-                    recurrence: rep.map(|r| vec![r]).unwrap_or_else(Vec::new),
-                    color_id: "8".to_string(),
-                    ..Default::default()
-                };
-
-                client
-                    .events()
-                    .insert(&cal_id, 0, 0, false, SendUpdates::Noop, false, &e)
-                    .await
-            });
-        }
-    }
+                    client
+                        .events()
+                        .insert(&cal_id, 0, 0, false, SendUpdates::Noop, false, &e)
+                        .await
+                }
+            }),
+    )
+    .await;
 
     // Await all insert tasks
     let mut inserted_evs = 0;
-    while let Some(res) = set.join_next().await {
-        let r = res??;
+    for res in adds {
+        let r = res?;
         debug!("ins {}", r.body.summary);
         inserted_evs += 1;
     }
@@ -215,7 +219,7 @@ pub async fn get_client(creds_path: PathBuf, token_path: PathBuf) -> Result<Clie
 
         // In your redirect URL capture the code sent and our state.
         // Send it along to the request for the token.
-        let OAuthResp { code, state } = resp_rx.await?;
+        let OAuthResp { code, state } = resp_rx.await?.ok_or_eyre("Timed out.")?;
         let access_token = c.get_access_token(&code, &state).await?;
 
         // Write the access token back
@@ -232,7 +236,7 @@ struct OAuthResp {
     state: String,
 }
 
-async fn spawn_oauth_listener(tx: oneshot::Sender<OAuthResp>) -> Result<()> {
+async fn spawn_oauth_listener(tx: oneshot::Sender<Option<OAuthResp>>) -> Result<()> {
     // Creating an OAuth listener requires that we have a channel to send the OAuth response from.
     // We also create another channel that we use to kill this server once we've received the
     // correct response.
@@ -266,11 +270,15 @@ async fn spawn_oauth_listener(tx: oneshot::Sender<OAuthResp>) -> Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             let value = async { inner_rx.recv().await.expect("Couldn't get inner_rx value") };
+            let timer = tokio::time::sleep(std::time::Duration::from_secs(TIMEOUT));
 
             tokio::select! {
+                _ = timer => {
+                    tx.send(None).expect("Couldn't send");
+                },
                 v = value => {
 
-                    tx.send(v).expect("Couldn't send");
+                    tx.send(Some(v)).expect("Couldn't send");
 
                 },
             }

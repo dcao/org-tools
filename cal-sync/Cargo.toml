@@ -8,7 +8,6 @@ license.workspace = true
 
 [dependencies]
 argh = "0.1"
-xshell = "0.2"
 walkdir = "2"
 rayon = "1"
 color-eyre = "0.6"
@@ -21,6 +20,7 @@ orgize = "0.10.0-alpha.10"
 axum = "0.8"
 google-calendar = { git = "https://github.com/oxidecomputer/third-party-api-clients.git" }
 tokio = { version = "1", features = ["full"] }
+futures = "0.3"
 open = "5"
 
 tracing = "0.1"

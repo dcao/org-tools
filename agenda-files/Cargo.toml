@@ -1,0 +1,16 @@
+[package]
+name = "agenda-files"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+walkdir = "2"
+rayon = "1"
+color-eyre = "0.6"
+orgize = "0.10.0-alpha.10"
+argh = "0.1"
+
+tracing = "0.1"
+tracing-subscriber = "0.3"

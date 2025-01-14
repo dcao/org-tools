@@ -1,9 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "cal-sync",
+    "agenda-files",
+    "cal-sync", "roam-export",
 ]
-default-members = ["cal-sync"]
+default-members = ["cal-sync", "agenda-files", "roam-export"]
 
 [workspace.package]
 authors = ["David Minh-Duy Cao <david@cao.sh>"]
