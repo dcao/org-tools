@@ -1,6 +1,12 @@
+:PROPERTIES:
+:ID:       1c2723f4-8573-4fed-b726-9a8b85f8907c
+:END:
 #+filetags: :export:
 
-* Test :export:
+* Test 3 :export:
+:PROPERTIES:
+:ID:       8a7811f5-f8d6-4ce9-a6e2-0f31941e1ddc
+:END:
 ** Test 2
 
 * Test 3

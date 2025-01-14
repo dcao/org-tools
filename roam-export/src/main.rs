@@ -210,6 +210,10 @@ fn main() -> Result<()> {
                 if let Some(p) = out_path {
                     println!("{}", p.to_str().unwrap());
                     if !args.dry {
+                        // if p.exists() {
+                        //     warn!("path {} exists!", p.to_str().unwrap());
+                        // }
+
                         fs::write(&p, contents).expect(&format!("couldn't write file {:?}", p))
                     }
                 }

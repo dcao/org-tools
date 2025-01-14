@@ -1,6 +1,6 @@
 use std::cmp::min;
 use std::collections::HashMap;
-use std::fmt::Write as _;
+use std::fmt::{Display, Write as _};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -17,6 +17,15 @@ use crate::EXPORT_TAG;
 pub enum ExportContext {
     File,
     Headline(Headline),
+}
+
+impl Display for ExportContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExportContext::File => write!(f, "file"),
+            ExportContext::Headline(headline) => write!(f, "'{}'", headline.title_raw()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -61,8 +70,6 @@ impl MarkdownExport {
 
 impl Traverser for MarkdownExport {
     fn event(&mut self, event: Event, ctx: &mut TraversalContext) {
-        // TODO: Handle front-matter for file nodes
-
         // First, let's check if we need to add things to the export stack.
         match &event {
             Event::Enter(Container::Keyword(k)) => {
@@ -77,6 +84,9 @@ impl Traverser for MarkdownExport {
                         }
                     }
                 }
+
+                // TODO: Handle other front-matter for file nodes
+                return ctx.skip();
             }
             Event::Enter(Container::Headline(h)) => {
                 // First, if we see a headline, we need to pop off the stack anything of a lower
@@ -132,10 +142,12 @@ impl Traverser for MarkdownExport {
                         }
                     }
 
-                    preamble += "---\n";
+                    preamble += "---\n\n";
 
                     self.output_stack
                         .push((ExportContext::Headline(h.clone()), preamble));
+
+                    return;
                 }
             }
             _ => {}
@@ -265,7 +277,7 @@ impl Traverser for MarkdownExport {
                             return ctx.skip();
                         } else {
                             warn!(
-                                "link to non-existent uuid {} in {}, {:?}",
+                                "link to non-existent uuid {} in {} ({})",
                                 uuid,
                                 self.this_file.to_string_lossy(),
                                 ex_ctx
