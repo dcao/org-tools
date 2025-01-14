@@ -31,9 +31,11 @@ impl Display for ExportContext {
 #[derive(Debug)]
 pub struct MarkdownExport {
     this_file: PathBuf,
-    filename_map: HashMap<Uuid, String>,
+    node_map: HashMap<Uuid, String>,
     headline_map: HashMap<(PathBuf, TextRange), String>,
 
+    file_front_matter: Vec<(String, String)>,
+    entered_headline: bool,
     output_stack: Vec<(ExportContext, String)>,
     finished_outputs: Vec<(ExportContext, String)>,
     inside_blockquote: bool,
@@ -42,14 +44,16 @@ pub struct MarkdownExport {
 impl MarkdownExport {
     pub fn new(
         this_file: PathBuf,
-        filename_map: HashMap<Uuid, String>,
+        node_map: HashMap<Uuid, String>,
         headline_map: HashMap<(PathBuf, TextRange), String>,
     ) -> Self {
         Self {
             this_file,
-            filename_map,
+            node_map,
             headline_map,
 
+            file_front_matter: Vec::new(),
+            entered_headline: false,
             output_stack: Vec::new(),
             finished_outputs: Vec::new(),
             inside_blockquote: false,
@@ -64,6 +68,18 @@ impl MarkdownExport {
             self.finished_outputs.push((ctx, res));
         }
 
+        // Let's check if we need to insert front matter.
+        // The file item should always be the last one in finished outputs.
+        if let Some((ExportContext::File, output)) = self.finished_outputs.last_mut() {
+            let mut preamble = "---\n".to_string();
+            for (k, v) in self.file_front_matter {
+                preamble += &format!("{k}: {v}");
+            }
+            preamble += "---\n\n";
+
+            *output = format!("{preamble}{output}");
+        }
+
         self.finished_outputs
     }
 }
@@ -73,9 +89,9 @@ impl Traverser for MarkdownExport {
         // First, let's check if we need to add things to the export stack.
         match &event {
             Event::Enter(Container::Keyword(k)) => {
-                if k.raw().starts_with("#+filetags") {
+                let raw = k.raw();
+                if raw.starts_with("#+filetags") {
                     // Let's get the tags.
-                    let raw = k.raw();
                     let (_, all_tags) = raw.split_once(':').unwrap();
                     for tag in all_tags.trim().split(':') {
                         if tag == EXPORT_TAG {
@@ -83,12 +99,42 @@ impl Traverser for MarkdownExport {
                             break;
                         }
                     }
+                } else {
+                    // For other keywords, let's first remove the #+
+                    let removed = raw.trim_start_matches("#+");
+
+                    // Let's then split on the colon.
+                    let (k, v_ws) = removed.split_once(':').unwrap();
+
+                    // Trim whitespace in the value.
+                    let v = v_ws.trim();
+
+                    // And insert.
+                    self.file_front_matter.push((k.to_string(), v.to_string()));
                 }
 
-                // TODO: Handle other front-matter for file nodes
+                return ctx.skip();
+            }
+            Event::Enter(Container::PropertyDrawer(ps)) => {
+                if self.entered_headline {
+                    return ctx.skip();
+                }
+
+                // If we're looking at a file-level property drawer, add front matter.
+                for p in ps.node_properties() {
+                    let raw = p.raw();
+                    let kv = raw.trim_start_matches(':');
+                    let (k, v_ws) = kv.split_once(':').unwrap();
+                    let v = v_ws.trim();
+
+                    self.file_front_matter.push((k.to_string(), v.to_string()));
+                }
+
                 return ctx.skip();
             }
             Event::Enter(Container::Headline(h)) => {
+                self.entered_headline = true;
+
                 // First, if we see a headline, we need to pop off the stack anything of a lower
                 // level than this headline.
                 while let Some((ctx, res)) = self.output_stack.pop() {
@@ -255,7 +301,16 @@ impl Traverser for MarkdownExport {
                 }
                 Event::Leave(Container::ListItem(_)) => {}
 
-                Event::Enter(Container::OrgTable(_table)) => {}
+                Event::Enter(Container::OrgTable(table)) => {
+                    warn!(
+                        "skipping org table in {} ({}): \"{}...\"",
+                        self.this_file.to_string_lossy(),
+                        ex_ctx,
+                        table.raw().split('\n').next().unwrap()
+                    );
+                    *output += "skipped table\n";
+                    return ctx.skip();
+                }
                 Event::Leave(Container::OrgTable(_)) => {}
                 Event::Enter(Container::OrgTableRow(_row)) => {}
                 Event::Leave(Container::OrgTableRow(_row)) => {}
@@ -268,7 +323,7 @@ impl Traverser for MarkdownExport {
                     if path.starts_with("id:") {
                         let id = path.trim_start_matches("id:");
                         let uuid = Uuid::from_str(id).expect("invalid id");
-                        if let Some(fname) = self.filename_map.get(&uuid) {
+                        if let Some(fname) = self.node_map.get(&uuid) {
                             if link.has_description() {
                                 let _ = write!(output, "[[{fname}][{}]]", link.description_raw());
                             } else {
@@ -277,8 +332,9 @@ impl Traverser for MarkdownExport {
                             return ctx.skip();
                         } else {
                             warn!(
-                                "link to non-existent uuid {} in {} ({})",
-                                uuid,
+                                %uuid,
+                                "link to non-existent uuid '{}' in {} ({})",
+                                link.description_raw(),
                                 self.this_file.to_string_lossy(),
                                 ex_ctx
                             );

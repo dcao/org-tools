@@ -13,7 +13,7 @@ use orgize::{
     ParseConfig, TextRange,
 };
 use rayon::prelude::*;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
@@ -99,7 +99,7 @@ fn main() -> Result<()> {
     let walk_one_end = jiff::Timestamp::now();
     info!("id pass finished in {:#}", walk_one_end - walk_one);
 
-    let filenames: HashMap<Uuid, String> = nodes
+    let node_map: HashMap<Uuid, String> = nodes
         .clone()
         .into_iter()
         .map(|(u, n)| {
@@ -168,7 +168,7 @@ fn main() -> Result<()> {
 
             let mut traversal = markdown::MarkdownExport::new(
                 entry.path().to_owned(),
-                filenames.clone(),
+                node_map.clone(),
                 headline_names.clone(),
             );
             org.traverse(&mut traversal);
@@ -242,11 +242,11 @@ struct IdTraversal {
 }
 
 impl Traverser for IdTraversal {
-    fn event(&mut self, event: Event, _ctx: &mut TraversalContext) {
+    fn event(&mut self, event: Event, ctx: &mut TraversalContext) {
         match event {
             Event::Enter(Container::PropertyDrawer(ps)) => {
                 if self.entered_headline {
-                    return;
+                    return ctx.skip();
                 }
 
                 for prop in ps.node_properties() {
