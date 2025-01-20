@@ -434,6 +434,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fix-prop-drawers"
+version = "0.1.0"
+dependencies = [
+ "argh",
+ "color-eyre",
+ "jiff",
+ "orgize",
+ "rayon",
+ "regex",
+ "slug",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

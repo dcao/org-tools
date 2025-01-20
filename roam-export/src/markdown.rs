@@ -158,42 +158,79 @@ impl Traverser for MarkdownExport {
                     }
                 }
 
-                if h.tags().find(|t| t == EXPORT_TAG).is_some() {
-                    // If there's currently something on the output stack,
-                    // write an embed link there.
+                // We have two conditions for pushing to the output stack:
+                // 1. The output stack is empty but we see an export tag on an ID node.
+                // 2. The output stack is not empty and we see an ID node.
+                let k = (self.this_file.clone(), h.text_range());
+                let id_headline = self.headline_map.get(&k);
+
+                let empty_stack = self.output_stack.is_empty();
+                let want_export = h.tags().find(|t| t == EXPORT_TAG).is_some();
+
+                if let Some(fname) = id_headline {
+                    if !empty_stack || want_export {
+                        // If there's currently something on the output stack,
+                        // write an embed link there.
+                        if !self.output_stack.is_empty() {
+                            {
+                                let (ex_ctx, output) = self.output_stack.last_mut().unwrap();
+                                let lvl = match ex_ctx {
+                                    ExportContext::File => 0,
+                                    ExportContext::Headline(headline) => headline.level(),
+                                };
+
+                                assert!(h.level() > lvl);
+
+                                *output += &"#".repeat(h.level() - lvl);
+                                *output += " ";
+                            }
+
+                            // To satisfy the borrow checker
+                            let fname = fname.clone();
+
+                            // We do this to preserve formatting in headlines
+                            for elem in h.title() {
+                                self.element(elem, ctx);
+                            }
+
+                            {
+                                let (_, output) = self.output_stack.last_mut().unwrap();
+
+                                *output += "\n\n";
+
+                                *output += &format!("![[{fname}]]\n\n");
+                            }
+                        }
+
+                        let mut preamble = "---\n".to_owned();
+                        // Push the title.
+                        preamble += "title: ";
+                        preamble += &h.title_raw();
+                        preamble += "\n";
+
+                        // Push other properties.
+                        if let Some(ps) = h.properties() {
+                            for p in ps.node_properties() {
+                                let raw = p.raw();
+                                let (k, v_ws) = raw[1..].split_once(':').unwrap();
+                                let v = v_ws.trim();
+
+                                preamble += &format!("{k}: {v}\n");
+                            }
+                        }
+
+                        preamble += "---\n\n";
+                        self.output_stack
+                            .push((ExportContext::Headline(h.clone()), preamble));
+
+                        return;
+                    }
+                } else if want_export {
+                    warn!("can't export id-less headline '{}'", h.title_raw());
                     if let Some(output) = self.output_stack.last_mut().map(|t| &mut t.1) {
-                        let k = (self.this_file.clone(), h.text_range());
-                        if let Some(fname) = self.headline_map.get(&k) {
-                            *output += &format!("![[{fname}]]\n\n");
-                        } else {
-                            warn!("exported headline {} with no id", h.title_raw());
-                            *output += &format!("exported headline {} with no id", h.title_raw());
-                        }
+                        // Warn if we have an export tag on a non-ID headline
+                        *output += &format!("exported headline {} with no id", h.title_raw());
                     }
-
-                    let mut preamble = "---\n".to_owned();
-                    // Push the title.
-                    preamble += "title: ";
-                    preamble += &h.title_raw();
-                    preamble += "\n";
-
-                    // Push other properties.
-                    if let Some(ps) = h.properties() {
-                        for p in ps.node_properties() {
-                            let raw = p.raw();
-                            let (k, v_ws) = raw[1..].split_once(':').unwrap();
-                            let v = v_ws.trim();
-
-                            preamble += &format!("{k}: {v}\n");
-                        }
-                    }
-
-                    preamble += "---\n\n";
-
-                    self.output_stack
-                        .push((ExportContext::Headline(h.clone()), preamble));
-
-                    return;
                 }
             }
             _ => {}
@@ -325,7 +362,7 @@ impl Traverser for MarkdownExport {
                         let uuid = Uuid::from_str(id).expect("invalid id");
                         if let Some(fname) = self.node_map.get(&uuid) {
                             if link.has_description() {
-                                let _ = write!(output, "[[{fname}][{}]]", link.description_raw());
+                                let _ = write!(output, "[[{fname}|{}]]", link.description_raw());
                             } else {
                                 let _ = write!(output, "[[{fname}]]");
                             }

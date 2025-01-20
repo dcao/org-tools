@@ -120,7 +120,7 @@ fn main() -> Result<()> {
         .filter_map(|(_, n)| match n {
             Node::File(_) => None,
             Node::Headline(path_buf, title, range) => {
-                Some(((path_buf, range), format!("{}.org", slug::slugify(title))))
+                Some(((path_buf, range), slug::slugify(title)))
             }
         })
         .collect();
@@ -177,7 +177,7 @@ fn main() -> Result<()> {
                 let out_path = match ex_ctx {
                     markdown::ExportContext::File => {
                         if let Some(fname) = file_node_names.get(entry.path()) {
-                            let new_path = args.output.join(fname).with_extension("org");
+                            let new_path = args.output.join(fname).with_extension("md");
                             Some(new_path)
                         } else {
                             warn!(
@@ -193,11 +193,11 @@ fn main() -> Result<()> {
                         let k = (entry.path().to_owned(), headline.text_range());
 
                         if let Some(fname) = headline_names.get(&k) {
-                            let new_path = args.output.join(fname).with_extension("org");
+                            let new_path = args.output.join(fname).with_extension("md");
                             Some(new_path)
                         } else {
                             warn!(
-                                "headline {} with export tag {} but no id",
+                                "id-less headline '{}' tagged with '{}'",
                                 headline.title_raw(),
                                 EXPORT_TAG
                             );

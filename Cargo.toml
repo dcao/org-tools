@@ -2,9 +2,9 @@
 resolver = "2"
 members = [
     "agenda-files",
-    "cal-sync", "roam-export",
+    "cal-sync", "fix-prop-drawers", "roam-export",
 ]
-default-members = ["cal-sync", "agenda-files", "roam-export"]
+default-members = ["cal-sync", "agenda-files", "roam-export", "fix-prop-drawers"]
 
 [workspace.package]
 authors = ["David Minh-Duy Cao <david@cao.sh>"]
