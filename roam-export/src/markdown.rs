@@ -11,7 +11,7 @@ use orgize::TextRange;
 use tracing::{trace, warn};
 use uuid::Uuid;
 
-use crate::EXPORT_TAG;
+use crate::{EXPORT_TAG, SKIP_TAG, TODO_KEYWORDS};
 
 #[derive(Debug)]
 pub enum ExportContext {
@@ -73,7 +73,7 @@ impl MarkdownExport {
         if let Some((ExportContext::File, output)) = self.finished_outputs.last_mut() {
             let mut preamble = "---\n".to_string();
             for (k, v) in self.file_front_matter {
-                preamble += &format!("{k}: {v}");
+                preamble += &format!("{k}: {v}\n");
             }
             preamble += "---\n\n";
 
@@ -158,6 +158,11 @@ impl Traverser for MarkdownExport {
                     }
                 }
 
+                // If we see the skip tag, ignore this tree completely and continue.
+                if h.tags().find(|t| t == SKIP_TAG).is_some() {
+                    return ctx.skip();
+                }
+
                 // We have two conditions for pushing to the output stack:
                 // 1. The output stack is empty but we see an export tag on an ID node.
                 // 2. The output stack is not empty and we see an ID node.
@@ -183,6 +188,16 @@ impl Traverser for MarkdownExport {
 
                                 *output += &"#".repeat(h.level() - lvl);
                                 *output += " ";
+
+                                // Write todo keyword
+                                if let Some(t) = h.todo_keyword() {
+                                    if TODO_KEYWORDS.contains(&t.as_ref()) {
+                                        let _ = write!(output, "☐ ");
+                                    } else {
+                                        // Assume done otherwise.
+                                        let _ = write!(output, "☑ ");
+                                    }
+                                }
                             }
 
                             // To satisfy the borrow checker
@@ -240,6 +255,7 @@ impl Traverser for MarkdownExport {
         trace!("fin {:?}", self.finished_outputs);
 
         // Now, let's do some actual rendering.
+        let mut needs_newline = false;
 
         if let Some((ex_ctx, output)) = self.output_stack.last_mut() {
             match event {
@@ -249,7 +265,6 @@ impl Traverser for MarkdownExport {
                 Event::Enter(Container::Headline(headline)) => {
                     // Let's figure out what to do here.
                     // First, we need to pop off
-
                     if !output.is_empty() && !output.ends_with(['\n', '\r']) {
                         *output += "\n";
                     }
@@ -261,6 +276,18 @@ impl Traverser for MarkdownExport {
 
                     let level = min(headline.level().saturating_sub(offset), 6);
                     let _ = write!(output, "{} ", "#".repeat(level));
+
+                    // Write todo keyword
+                    if let Some(t) = headline.todo_keyword() {
+                        if TODO_KEYWORDS.contains(&t.as_ref()) {
+                            let _ = write!(output, "☐ ");
+                        } else {
+                            // Assume done otherwise.
+                            let _ = write!(output, "☑ ");
+                        }
+                    }
+
+                    needs_newline = true;
                     for elem in headline.title() {
                         self.element(elem, ctx);
                     }
@@ -429,6 +456,12 @@ impl Traverser for MarkdownExport {
                 Event::Entity(entity) => *output += entity.utf8(),
 
                 _ => {}
+            }
+        }
+
+        if needs_newline {
+            if let Some((_, output)) = self.output_stack.last_mut() {
+                *output += "\n\n";
             }
         }
     }

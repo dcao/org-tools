@@ -23,6 +23,7 @@ const TODO_KEYWORDS: [&str; 2] = ["TODO", "DOIN"];
 const DONE_KEYWORDS: [&str; 2] = ["DONE", "CNCL"];
 
 pub const EXPORT_TAG: &str = "export";
+pub const SKIP_TAG: &str = "hidden";
 
 #[derive(FromArgs)]
 /// Sync org and gcal.

@@ -19,6 +19,10 @@ use tokio::sync::{
     mpsc,
     oneshot::{self},
 };
+use tokio_retry::{
+    strategy::{jitter, ExponentialBackoff},
+    Retry,
+};
 use tracing::{debug, info};
 
 use crate::org::AgendaItem;
@@ -51,6 +55,10 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
         .find(|c| c.summary == calendar_summary)
         .wrap_err(format!("Couldn't find calendar {}", calendar_summary))?;
 
+    let retry_strategy = ExponentialBackoff::from_millis(10)
+        .map(jitter) // add jitter to delays
+        .take(3); // limit to 3 retries
+
     // Next, find all events in this calendar with the matching description.
     let dels = join_all(
         client
@@ -78,16 +86,20 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
             .map(|ev| {
                 let cal_id = cal.id.clone();
                 let client = client.clone();
+                let value = retry_strategy.clone();
 
                 async move {
                     let ev_id = ev.id;
 
                     debug!("del {}", ev.summary);
 
-                    client
-                        .events()
-                        .delete(&cal_id, &ev_id, false, SendUpdates::Noop)
-                        .await
+                    Retry::spawn(value.clone(), || async {
+                        client
+                            .events()
+                            .delete(&cal_id, &ev_id, false, SendUpdates::Noop)
+                            .await
+                    })
+                    .await
                 }
             }),
     )
@@ -117,6 +129,8 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
 
                 let (start, end, rep) = s.into_gcal();
 
+                let value = retry_strategy.clone();
+
                 async move {
                     let e = Event {
                         summary: format!("TS: {name}"),
@@ -128,10 +142,13 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
                         ..Default::default()
                     };
 
-                    client
-                        .events()
-                        .insert(&cal_id, 0, 0, false, SendUpdates::Noop, false, &e)
-                        .await
+                    Retry::spawn(value.clone(), || async {
+                        client
+                            .events()
+                            .insert(&cal_id, 0, 0, false, SendUpdates::Noop, false, &e)
+                            .await
+                    })
+                    .await
                 }
             }),
     )

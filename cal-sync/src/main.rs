@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
             Ok(o) => o,
             Err(e) => {
                 println!("✗ err");
+                println!("{:?}", e);
                 if args.show_err {
                     return Err(e);
                 } else {
