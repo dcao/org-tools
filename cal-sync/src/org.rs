@@ -13,6 +13,7 @@ use orgize::{
 use rayon::prelude::*;
 
 const DONE_KEYWORDS: [&str; 2] = ["DONE", "CNCL"];
+const BIG_EVENT_TAG: &str = "big_event";
 
 pub fn get_valid_items(path: PathBuf) -> Vec<AgendaItem> {
     let parse_config = ParseConfig {
@@ -73,7 +74,7 @@ struct Traversal {
 
 // This traversal ignores four timestamps:
 // - Timestamps for DONE/CNCL entries
-// - Timestamps for all-day entries
+// - Timestamps for all-day entries (if they are *not* big events)
 // - Timestamps after today
 // - Inactive timestamps
 impl Traverser for Traversal {
@@ -113,20 +114,54 @@ impl Traverser for Traversal {
                 }
 
                 // Remove all invalid timestamps
-                l.timestamps.retain_mut(|ts| match &ts.start {
-                    Dateish::AllDay(_) => false,
-                    Dateish::Precise(zoned) => {
-                        if let Some(Dateish::Precise(zoned_end)) = &ts.end {
-                            zoned_end > self.now
-                        } else {
-                            ts.end = Some(Dateish::Precise(
-                                zoned.checked_add(1.hour()).expect("Overflow duration"),
-                            ));
+                l.timestamps.retain_mut(|ts| {
+                    match &ts.start {
+                        Dateish::AllDay(date) => {
+                            // We only preserve this all-day timestamp if the headline has the big
+                            // event tag.
+                            let has_tag = headline.tags().find(|t| t == BIG_EVENT_TAG).is_some();
 
-                            zoned > self.now
+                            if has_tag {
+                                if let Some(Dateish::AllDay(date_end)) = &ts.end {
+                                    // End dates are exclusive in gcal but inclusive in org.
+                                    // Add one day
+                                    let future = *date_end + 1.day();
+                                    let is_ok =
+                                        future.to_zoned(self.now.time_zone().clone()).unwrap()
+                                            > self.now;
+                                    ts.end = Some(Dateish::AllDay(future));
+                                    ts.repeat.is_some() || is_ok
+                                } else {
+                                    ts.end = Some(Dateish::AllDay(date.clone()));
+                                    ts.repeat.is_some()
+                                        || date.to_zoned(self.now.time_zone().clone()).unwrap()
+                                            > self.now
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        Dateish::Precise(zoned) => {
+                            if let Some(Dateish::Precise(zoned_end)) = &ts.end {
+                                ts.repeat.is_some() || zoned_end > self.now
+                            } else {
+                                ts.end = Some(Dateish::Precise(
+                                    zoned.checked_add(1.hour()).expect("Overflow duration"),
+                                ));
+
+                                ts.repeat.is_some() || zoned > self.now
+                            }
                         }
                     }
                 });
+
+                for ts in &l.timestamps {
+                    if ts.end.is_none() {
+                        tracing::error!(?ts);
+                    }
+
+                    assert!(ts.end.is_some());
+                }
 
                 if !l.timestamps.is_empty() {
                     self.items.push(l);
@@ -172,9 +207,12 @@ pub struct RepeatedDate {
 }
 
 impl RepeatedDate {
-    pub fn into_gcal(self) -> (EventDateTime, Option<EventDateTime>, Option<String>) {
-        let start = self.start.into_gcal();
-        let end = self.end.map(|e| e.into_gcal());
+    pub fn into_gcal(self) -> (EventDateTime, EventDateTime, Option<String>) {
+        let start = self.start.clone().into_gcal();
+        let end = self
+            .end
+            .map(|e| e.into_gcal())
+            .expect(&format!("task {:?} has no end", self.start));
 
         let rep = self.repeat;
 

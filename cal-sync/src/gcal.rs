@@ -23,7 +23,7 @@ use tokio_retry::{
     strategy::{jitter, ExponentialBackoff},
     Retry,
 };
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use crate::org::AgendaItem;
 
@@ -55,12 +55,12 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
         .find(|c| c.summary == calendar_summary)
         .wrap_err(format!("Couldn't find calendar {}", calendar_summary))?;
 
-    let retry_strategy = ExponentialBackoff::from_millis(10)
+    let retry_strategy = ExponentialBackoff::from_millis(15)
         .map(jitter) // add jitter to delays
-        .take(3); // limit to 3 retries
+        .take(4); // limit to 3 retries
 
     // Next, find all events in this calendar with the matching description.
-    let dels = join_all(
+    let cal_evs = Retry::spawn(retry_strategy.clone(), || async {
         client
             .events()
             .list_all(
@@ -79,7 +79,11 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
                 "",
                 "",
             )
-            .await?
+            .await
+    })
+    .await?;
+    let dels = join_all(
+        cal_evs
             .body
             .into_iter()
             .filter(|ev| ev.description == GENERATED_DESC)
@@ -94,10 +98,16 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
                     debug!("del {}", ev.summary);
 
                     Retry::spawn(value.clone(), || async {
-                        client
+                        trace!("start del {}", ev.summary);
+
+                        let r = client
                             .events()
                             .delete(&cal_id, &ev_id, false, SendUpdates::Noop)
-                            .await
+                            .await;
+
+                        trace!("end del {}", ev.summary);
+
+                        r
                     })
                     .await
                 }
@@ -136,7 +146,7 @@ pub async fn sync(client: Client, events: Vec<AgendaItem>, calendar_summary: &st
                         summary: format!("TS: {name}"),
                         description: GENERATED_DESC.to_string(),
                         start: Some(start),
-                        end,
+                        end: Some(end),
                         recurrence: rep.map(|r| vec![r]).unwrap_or_else(Vec::new),
                         color_id: "8".to_string(),
                         ..Default::default()
